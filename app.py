@@ -1,4 +1,4 @@
-"""Streamlit dashboard for explaining breast-cancer model predictions."""
+ """Streamlit dashboard for explaining breast-cancer model predictions."""
 
 import matplotlib
 
@@ -39,7 +39,6 @@ def load_cached_artifact() -> dict:
 @st.cache_resource
 def build_shap_explainer(_model):
     """Build a SHAP TreeExplainer once for the cached model."""
-    # SHAP's TreeExplainer works directly with the trained tree model.
     return shap.TreeExplainer(_model)
 
 
@@ -65,7 +64,6 @@ def compute_shap_values(_model, X_test_values: np.ndarray, feature_names: tuple[
     """Compute SHAP values once for the test set."""
     X_test = pd.DataFrame(X_test_values, columns=list(feature_names))
     explainer = build_shap_explainer(_model)
-    # SHAP Explanation objects preserve values and feature names in the modern API.
     return explainer(X_test)
 
 
@@ -92,7 +90,6 @@ def get_class_explanation(
     else:
         class_base_values = np.asarray([base_values.item()] * class_values.shape[0])
 
-    # A 2D Explanation contains one row per test sample and one column per feature.
     return shap.Explanation(
         values=class_values,
         base_values=class_base_values,
@@ -144,13 +141,14 @@ def get_current_row(
         model = artifact["model"]
         importances = model.feature_importances_
         ranking = np.argsort(importances)[::-1][:10]
+
         def reset_sliders() -> None:
             """Reset all top-feature slider keys to training means."""
             for index in ranking:
                 name = feature_names[index]
                 st.session_state[f"slider_{index}"] = float(X_train[name].mean())
 
-        st.sidebar.button("Reset to mean", on_click=reset_sliders)
+        st.sidebar.button("🔄 Reset to mean", on_click=reset_sliders, use_container_width=True)
         for index in ranking:
             name = feature_names[index]
             minimum = float(X_train[name].min())
@@ -195,19 +193,24 @@ def sentence_about_top_features(
             if float(row_values.iloc[index]) < float(training_mean.iloc[index])
             else "high"
         )
-        phrases.append(f"{name} is {level}")
+        phrases.append(f"**{name}** is {level}")
 
     result = ", ".join(phrases)
     return (
-        f"Predicted {str(class_names[predicted_index]).upper()} "
+        f"Predicted **{str(class_names[predicted_index]).upper()}** "
         f"({predicted_probability:.0%}) mainly because {result}."
     )
 
 
 def main() -> None:
     """Run the Explainable Machine Learning Streamlit app."""
-    st.set_page_config(page_title="Explainable Machine Learning", layout="wide")
-    st.title("Explainable Machine Learning Dashboard")
+    st.set_page_config(
+        page_title="Explainable Machine Learning",
+        page_icon="🔬",
+        layout="wide",
+    )
+    st.title("🔬 Explainable Machine Learning Dashboard")
+    st.caption("Breast Cancer Diagnosis Interpretability using SHAP & LIME")
 
     artifact = load_cached_artifact()
     model = artifact["model"]
@@ -217,13 +220,15 @@ def main() -> None:
     X_test = artifact["X_test"]
     y_test = artifact["y_test"]
 
-    st.sidebar.header("Explanation Controls")
+    st.sidebar.header("⚙️ Explanation Controls")
     input_mode = st.sidebar.radio(
         "Input mode",
         options=["Pick a test row", "Adjust feature sliders"],
         index=0,
     )
     row_values, row_frame = get_current_row(artifact, input_mode)
+
+    st.sidebar.divider()
     explained_class_name = st.sidebar.selectbox(
         "Explained class",
         options=class_names,
@@ -249,284 +254,54 @@ def main() -> None:
     predicted_probabilities = model.predict_proba(row_frame)[0]
     predicted_index = int(np.argmax(predicted_probabilities))
     predicted_probability = float(predicted_probabilities[predicted_index])
+    predicted_label = str(class_names[predicted_index]).upper()
 
     tabs = st.tabs([
-        "Prediction",
-        "SHAP: Global",
-        "SHAP: Local",
-        "LIME",
-        "Model Performance",
-        "About",
+        "🎯 Prediction",
+        "🌍 SHAP: Global",
+        "🔍 SHAP: Local",
+        "🍋 LIME",
+        "📊 Model Performance",
+        "ℹ️ About",
     ])
 
     with tabs[0]:
         with st.spinner("Calculating prediction and explanation..."):
             try:
-                st.subheader(f"Predicted class: {class_names[predicted_index].upper()}")
-                st.metric(
-                    "Prediction confidence",
-                    f"{predicted_probability:.2%}",
-                    delta=None,
-                )
-                st.progress(min(max(predicted_probability, 0.0), 1.0))
-                st.markdown("**Probability for each class**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(
+                        label="Predicted Class",
+                        value=predicted_label,
+                    )
+                with col2:
+                    st.metric(
+                        label="Prediction Confidence",
+                        value=f"{predicted_probability:.2%}",
+                    )
+
+                st.divider()
+                st.markdown("#### Class Probabilities")
                 probability_frame = pd.DataFrame(
                     {
-                        "Class": class_names,
+                        "Class": [c.capitalize() for c in class_names],
                         "Probability": predicted_probabilities,
                     }
                 )
-                st.dataframe(probability_frame, hide_index=True)
-
-                row_position = int(row_frame.index[0]) if row_frame.index.size else 0
-                test_matches = np.all(X_test.values == row_values, axis=1)
-                match_indices = np.flatnonzero(test_matches)
-                if input_mode == "Pick a test row":
-                    sample_index = int(
-                        st.session_state.get("Test-set row", match_indices[0] if match_indices.size else 0)
-                    )
-                    if sample_index >= len(X_test):
-                        sample_index = 0
-                else:
-                    sample_index = int(match_indices[0]) if match_indices.size else 0
-
-                explanation_row = shap.Explanation(
-                    values=np.asarray(class_explanation.values[sample_index])
-                    if class_explanation.values.shape[0] > sample_index
-                    else np.asarray(class_explanation.values).reshape(-1),
-                    base_values=float(
-                        np.asarray(class_explanation.base_values).reshape(-1)[
-                            sample_index
-                            if np.asarray(class_explanation.base_values).reshape(-1).size > sample_index
-                            else 0
-                        ]
-                    ),
-                    data=row_values,
-                    feature_names=feature_names,
-                )
-                st.info(
-                    sentence_about_top_features(
-                        row_frame,
-                        class_explanation,
-                        predicted_index,
-                        predicted_probability,
-                        class_names,
-                        X_train.mean(),
-                    )
-                )
-            except Exception as exc:
-                st.error(f"Prediction could not be shown: {exc}")
-
-    with tabs[1]:
-        with st.spinner("Building global SHAP plots..."):
-            try:
-                st.subheader("Which features matter most across the test set?")
-                render_plot(
-                    lambda: shap.plots.beeswarm(
-                        class_explanation,
-                        max_display=15,
-                        show=False,
-                    ),
-                    10,
-                    7,
-                )
-                st.subheader("Mean absolute SHAP value")
-                render_plot(
-                    lambda: shap.plots.bar(
-                        class_explanation,
-                        max_display=15,
-                        show=False,
-                    ),
-                    10,
-                    7,
-                )
-            except Exception as exc:
-                st.error(f"Global SHAP plots could not be shown: {exc}")
-
-    with tabs[2]:
-        with st.spinner("Building local SHAP plots..."):
-            try:
-                test_matches = np.all(X_test.values == row_values, axis=1)
-                match_indices = np.flatnonzero(test_matches)
-                if input_mode == "Pick a test row":
-                    sample_index = int(
-                        st.session_state.get("Test-set row", match_indices[0] if match_indices.size else 0)
-                    )
-                else:
-                    sample_index = int(match_indices[0]) if match_indices.size else 0
-                if sample_index >= len(X_test):
-                    sample_index = 0
-
-                shap_values_row = np.asarray(class_explanation.values[sample_index]).reshape(-1)
-                base_values = np.asarray(class_explanation.base_values).reshape(-1)
-                base_value = float(
-                    base_values[sample_index] if base_values.size > sample_index else base_values[0]
-                )
-                single_explanation = shap.Explanation(
-                    values=shap_values_row,
-                    base_values=base_value,
-                    data=row_values,
-                    feature_names=feature_names,
-                )
-                render_plot(
-                    lambda: shap.plots.waterfall(
-                        single_explanation,
-                        max_display=12,
-                        show=False,
-                    ),
-                    10,
-                    6,
-                )
-                render_plot(
-                    lambda: shap.plots.force(
-                        base_value,
-                        shap_values_row,
-                        row_values,
-                        feature_names=feature_names,
-                        matplotlib=True,
-                        show=False,
-                    ),
-                    12,
-                    3,
-                )
-            except Exception as exc:
-                st.error(f"Local SHAP plots could not be shown: {exc}")
-
-    with tabs[3]:
-        with st.spinner("Building the LIME explanation..."):
-            try:
-                lime_explainer = build_lime_explainer(
-                    X_train.values,
-                    tuple(feature_names),
-                    tuple(class_names),
-                )
-
-                def lime_predict(values: np.ndarray) -> np.ndarray:
-                    # Rebuild a named DataFrame so the model never emits feature-name warnings.
-                    frame = pd.DataFrame(values, columns=feature_names)
-                    return model.predict_proba(frame)
-
-                lime_result = lime_explainer.explain_instance(
-                    row_values,
-                    lime_predict,
-                    num_features=lime_features,
-                    labels=(class_index,),
-                )
-                lime_items = lime_result.as_list(label=class_index)
-                labels = [str(item[0]) for item in lime_items]
-                contributions = [float(item[1]) for item in lime_items]
-
-                def draw_lime() -> None:
-                    colors = ["green" if value >= 0 else "red" for value in contributions]
-                    plt.barh(range(len(labels)), contributions, color=colors)
-                    plt.yticks(range(len(labels)), labels)
-                    plt.axvline(0, color="black", linewidth=0.8)
-                    plt.gca().invert_yaxis()
-                    plt.xlabel("Contribution to explained class")
-                    plt.ylabel("Feature condition")
-
-                render_plot(draw_lime, 10, 7)
                 st.dataframe(
-                    pd.DataFrame(
-                        {
-                            "Feature condition": labels,
-                            "Contribution": contributions,
-                        }
-                    ),
+                    probability_frame,
+                    column_config={
+                        "Class": st.column_config.TextColumn("Diagnosis Class"),
+                        "Probability": st.column_config.ProgressColumn(
+                            "Probability Score",
+                            format="%.2f",
+                            min_value=0.0,
+                            max_value=1.0,
+                        ),
+                    },
                     hide_index=True,
-                )
-            except Exception as exc:
-                st.error(f"LIME explanation could not be shown: {exc}")
-
-    with tabs[4]:
-        with st.spinner("Calculating model performance..."):
-            try:
-                metrics = artifact["metrics"]
-                st.dataframe(
-                    pd.DataFrame(metrics).T[
-                        ["accuracy", "precision", "recall", "f1", "roc_auc"]
-                    ].round(4),
-                    hide_index=False,
+                    use_container_width=True,
                 )
 
-                left, right = st.columns(2)
-                predictions = model.predict(X_test)
-                with left:
-                    st.subheader("Confusion matrix")
-
-                    def draw_confusion() -> None:
-                        matrix = confusion_matrix(y_test, predictions)
-                        ax = plt.gca()
-                        image = ax.imshow(matrix, cmap="Blues")
-                        ax.set_xticks([0, 1], labels=class_names)
-                        ax.set_yticks([0, 1], labels=class_names)
-                        ax.set_xlabel("Predicted")
-                        ax.set_ylabel("Actual")
-                        for row in range(matrix.shape[0]):
-                            for column in range(matrix.shape[1]):
-                                ax.text(
-                                    column,
-                                    row,
-                                    str(matrix[row, column]),
-                                    ha="center",
-                                    va="center",
-                                )
-                        plt.colorbar(image, ax=ax)
-
-                    render_plot(draw_confusion, 6, 5)
-
-                with right:
-                    st.subheader("ROC curve")
-
-                    def draw_roc() -> None:
-                        probabilities = model.predict_proba(X_test)[:, 1]
-                        false_positive, true_positive, _ = roc_curve(y_test, probabilities)
-                        auc_value = roc_auc_score(y_test, probabilities)
-                        plt.plot(
-                            false_positive,
-                            true_positive,
-                            label=f"Saved model (AUC = {auc_value:.4f})",
-                        )
-                        plt.plot([0, 1], [0, 1], linestyle="--", color="gray")
-                        plt.xlabel("False positive rate")
-                        plt.ylabel("True positive rate")
-                        plt.legend()
-
-                    render_plot(draw_roc, 6, 5)
-            except Exception as exc:
-                st.error(f"Performance information could not be shown: {exc}")
-
-    with tabs[5]:
-        st.subheader("About SHAP")
-        st.write(
-            "SHAP explains a prediction by estimating how much each feature pushes "
-            "it toward or away from a class. It is useful for seeing both global "
-            "feature importance and one person's prediction."
-        )
-        st.subheader("About LIME")
-        st.write(
-            "LIME builds a small local approximation around one sample and shows "
-            "which feature conditions matter most for that case."
-        )
-        st.subheader("SHAP vs LIME")
-        st.table(
-            pd.DataFrame(
-                {
-                    "SHAP": [
-                        "Model-consistent local contributions",
-                        "Global beeswarm and bar views",
-                        "Can be slower for complex models",
-                    ],
-                    "LIME": [
-                        "Local approximation around one row",
-                        "Readable feature-condition rules",
-                        "Can change with random sampling",
-                    ],
-                },
-                index=["Strength", "View", "Limitation"],
-            )
-        )
-
-
-if __name__ == "__main__":
-    main()
+                test_matches = np.all(X_test.values == row_values, axis=1)
+                match_indices = np.flatnonzero(test_matches)
