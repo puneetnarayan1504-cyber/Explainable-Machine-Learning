@@ -243,7 +243,6 @@ def main() -> None:
     )
 
     class_index = class_names.index(explained_class_name)
-    shap_explainer = build_shap_explainer(model)
     raw_explanation = compute_shap_values(
         model,
         X_test.values,
@@ -303,5 +302,7 @@ def main() -> None:
                     use_container_width=True,
                 )
 
-                test_matches = np.all(X_test.values == row_values, axis=1)
-                match_indices = np.flatnonzero(test_matches)
+                summary_text = sentence_about_top_features(
+                    row_frame,
+                    class_explanation,
+                    predicted_index,
